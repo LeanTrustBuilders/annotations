@@ -27,8 +27,13 @@ a dataset facet named after it.
 | `@[claim]`, `@[claim "reference"]` | a theorem | this is one of the results the project puts forward, optionally with where it is stated informally (a paper and theorem number, a book section, a Wikidata item) |
 | `@[example_of d]` | a theorem | this theorem states that a concrete object satisfies the definition `d`: evidence that `d` is not vacuous |
 | `@[nonexample_of d]` | a theorem | this theorem states that a concrete object does *not* satisfy `d`: evidence that `d` is not trivially true |
+| `@[specifies d "why"]` | a theorem | this theorem is part of the specification of the definition `d`: one of the properties its author offers as evidence that `d` is the intended one. `d` may be omitted when the theorem sits in `d`'s namespace; repeat the attribute for several definitions |
+| `@[characterization property d "why"]` | a predicate `P` | `P` characterizes the definition `d`: `d` is *the* object with property `P`, up to a relation |
+| `@[characterization existence]` | a theorem | `d` satisfies `P` (checked, with `isDefEq`) |
+| `@[characterization uniqueness]` | a theorem | `P` determines its subject up to a relation, read off the conclusion (checked) |
 
-All three check that they are applied to a proposition, are global, and are applied once.
+`claim`, `example_of` and `nonexample_of` check that they are applied to a proposition, are global,
+and are applied once.
 `example_of` and `nonexample_of` check that `d` resolves to a definition and warn when the
 statement does not mention it.
 
@@ -42,6 +47,13 @@ def IsEven (n : Nat) : Prop := n % 2 = 0
 theorem isEven_add {m n : Nat} (hm : IsEven m) (hn : IsEven n) : IsEven (m + n) := by
   unfold IsEven at *; omega
 ```
+
+`specifies` and `characterization` come from the `Characterization` package (earlier `LeanSpec`, in
+`LeanMachineLearning/exposition`), moved here with their syntax, checks and tests unchanged
+(`TrustAnnotations/Specification.lean`), so that one extension serves every annotation. A project
+using them replaces `import Characterization` with `import TrustAnnotations` and requires this
+package instead; nothing else changes. `specEntries`, `charEntries` and `characterizations` read
+them back.
 
 ## Use
 
@@ -75,6 +87,12 @@ by the extractor as the facet `annotation.my_attr` with no change to the extract
 `TrustAnnotations.entries env` returns every entry visible in `env`. A tool reading a compiled
 project must link this package and import with `importModules (loadExts := true)` after
 `enableInitializersExecution`.
+
+## Versions
+
+`main` follows the newest Lean toolchain; a branch `lean-v<toolchain>` carries the same code on an
+older one (`lean-v4.34.0`, `lean-v4.34.0-rc2`). The tags `v4.34.0-rc2`, `v4.34.0` and `v4.35.0-rc2`
+are snapshots from before `specifies` and `characterization` moved here.
 
 ## Compatibility
 
