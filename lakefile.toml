@@ -1,0 +1,16 @@
+name = "TrustAnnotations"
+version = "0.1.0"
+defaultTargets = ["TrustAnnotations"]
+
+# Deliberately dependency-free: this is the package a *target* project depends on, so it must
+# not pull anything in beyond Lean core.
+[[lean_lib]]
+name = "TrustAnnotations"
+
+# The `#guard`/`#guard_msgs` checks, as a separate target: checked at elaboration time, so
+# building this target is running them. Under `TrustAnnotations.Test` rather than `Test`, since
+# module roots are shared across a Lake workspace.
+[[lean_lib]]
+name = "TrustAnnotationsTest"
+roots = ["TrustAnnotations.Test"]
+globs = ["TrustAnnotations.Test.*"]
