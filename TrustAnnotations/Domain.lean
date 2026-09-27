@@ -97,8 +97,8 @@ def domainOf? (env : Environment) (decl : Name) : Option DomainEntry :=
 def domainPredicateName (decl : Name) : Name := decl.str "_domain"
 
 /-- The domain `stx` states for `decl`, elaborated under `decl`'s binders: the predicate (a lambda
-over all of `decl`'s arguments, with their binder infos), its type, and the proposition
-pretty-printed in `decl`'s own variable names. -/
+over `decl`'s arguments up to the last one it is about, with their binder infos), its type, and the
+proposition pretty-printed in `decl`'s own variable names. -/
 private def elabDomain (decl : Name) (stx : Syntax) : TermElabM (Expr × Expr × String) := do
   let info ← getConstInfo decl
   forallTelescope info.type fun xs _ => do
@@ -121,7 +121,11 @@ private def elabDomain (decl : Name) (stx : Syntax) : TermElabM (Expr × Expr ×
     if body.hasMVar then
       throwError "the domain of `{decl}` is not fully determined: {indentExpr body}"
     let text := (← ppExpr shown).pretty (width := 1000)
-    return (← mkLambdaFVars xs body, ← mkForallFVars xs prop, text)
+    -- The predicate takes the definition's arguments up to the last the domain is about: a
+    -- definition returning a function has more binders in its type than it has arguments.
+    let k := (xs.size - (xs.reverse.findIdx? (body.containsFVar ·.fvarId!)).getD xs.size)
+    let args := xs.extract 0 k
+    return (← mkLambdaFVars args body, ← mkForallFVars args prop, text)
 
 /-- Records `stx` as the domain of `decl`: adds the hidden predicate to the current module, and the
 entry anchored to it. -/

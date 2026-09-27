@@ -8,3 +8,4 @@ public import TrustAnnotations.Test.CharacterizationCrossModule
 public import TrustAnnotations.Test.CharacterizationTheorem
 public import TrustAnnotations.Test.Domain
 public import TrustAnnotations.Test.DomainCatalogue
+public import TrustAnnotations.Test.UpTo

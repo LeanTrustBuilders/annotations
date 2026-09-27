@@ -32,6 +32,7 @@ a dataset facet named after it.
 | `@[characterization property d "why"]` | a predicate `P` | `P` characterizes the definition `d`: `d` is *the* object with property `P`, up to a relation. For a property that is worth a name of its own; otherwise the form above needs no predicate |
 | `@[characterization existence]` | a theorem | `d` satisfies `P` (checked, with `isDefEq`) |
 | `@[characterization uniqueness]` | a theorem | `P` determines its subject up to a relation, read off the conclusion (checked) |
+| `@[up_to R "note"]` | a definition | what the definition is determined up to: a relation on its result type, with its arguments in scope (`@[up_to (· =ᵐ[μ] ·)]`). Its value is one representative, and a statement that tells related values apart is about that representative. What proves it is a characterization whose uniqueness theorem ends in the relation. `attribute [up_to …] d` also works on a definition of another library |
 | `@[domain (proposition) "note"]` | a definition | where the definition is meant to apply: a proposition about its arguments, under their own names (`@[domain (0 ≤ p ∧ 0 < q)]`), or a function of its explicit arguments (`@[domain (fun n => 0 < n)]`). Outside it, the value is a junk value or a convention. `attribute [domain …] d` also works on a definition of another library, for a catalogue |
 
 `claim`, `example_of` and `nonexample_of` check that they are applied to a proposition, are global,
@@ -97,6 +98,21 @@ stored as a hidden predicate over the definition's arguments, `klTerm._domain`, 
 use the proposition itself. Its name is internal, so documentation, search and completion skip it,
 and its body is exported under the module system. `domainEntries` and `domainOf?` read domains
 back.
+
+### What a definition is determined up to
+
+```lean
+attribute [up_to (· =ᵐ[μ] ·) "one version among the functions equal to it almost everywhere"]
+  MeasureTheory.condExp   -- in a catalogue
+```
+
+The relation is elaborated against what the definition returns after its arguments. A definition
+returning a function (`condExp … : α → E`) has more binders in its type than arguments, so the
+arity is the deepest one the relation elaborates against. The relation is stored as a hidden
+declaration, `condExp._upTo`, over the definition's arguments. The payload records it applied to two
+variables (`statement`, `x =ᵐ[μ] y`), its head constant (`relationHead`, `Filter.EventuallyEq`),
+the `note`, and the `source`. `upToEntries` and `upToOf?` read these back. A type determined up to
+isomorphism is not covered: an isomorphism of fields is not a relation on bare types.
 
 ### Where these come from
 
