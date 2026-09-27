@@ -117,6 +117,22 @@ State them as `@[specifies]` theorems before this one, or apply the attribute af
 @[characterization]
 theorem eq_pick' (f : Nat → Nat) (n m : Nat) (_h₁ : m < 10) (h₂ : m = f n) : m = pick f n := h₂
 
+/-- A proposition about a number, as a class. -/
+class IsPos (n : Nat) : Prop where
+  pos : 0 < n
+
+/-- A proposition about a type, as a class. -/
+class Small (α : Type) : Prop
+
+/-- Half of `n`. -/
+def half (n : Nat) : Nat := n / 2
+
+-- Instance arguments that are propositions about data are where the characterization holds
+-- (`[IsPos n]`, like `[SigmaFinite (μ.trim hm)]`); those about types only are the setting
+-- (`[Small α]`, like `[CompleteSpace E]`), and are left out.
+@[characterization]
+theorem eq_half (α : Type) [Small α] (n m : Nat) [IsPos n] (h : m = n / 2) : m = half n := h
+
 /-! ## Reading the annotations back -/
 
 private def dump (env : Environment) : String :=
@@ -175,6 +191,11 @@ TrustAnnotations.Test.CharacterizationTheorem.pick by TrustAnnotations.Test.Char
     m < 10: open
     m = f n: shown
   complete: false
+TrustAnnotations.Test.CharacterizationTheorem.half by TrustAnnotations.Test.CharacterizationTheorem.eq_half
+  uniqueness, candidate m, up to: m = half n [Eq]
+    m = n / 2: shown
+  where: IsPos n
+  complete: true
 -/
 #guard_msgs in
 #eval show CoreM Unit from do IO.println (dump (← getEnv))
