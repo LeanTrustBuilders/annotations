@@ -831,8 +831,12 @@ private def readTheorem (thmType : Expr) (levelParams : List Name) (explicit? : 
     for (rel, other?) in readings do
       -- The candidate and the definition are the relation's last two arguments (`g =ᵐ[μ] condExp …`),
       -- or, for a type determined up to isomorphism, the first two explicit arguments of the
-      -- isomorphism type (`Nonempty (K ≃+*o ℝ)`), whose last arguments are instances.
-      let inner := if rel.isAppOfArity ``Nonempty 1 then rel.appArg! else rel
+      -- isomorphism type (`Nonempty (K ≃+*o ℝ)`), whose last arguments are instances. An isomorphism
+      -- that also preserves more (`∃ e : K ≃+*o ℝ, e 0 = 0 ∧ …`) pins down every operation the
+      -- statement names: `ℝ`'s `0` is its own definition, not the ring structure's.
+      let inner := if rel.isAppOfArity ``Nonempty 1 then rel.appArg!
+        else if rel.isAppOfArity ``Exists 2 then rel.appFn!.appArg!
+        else rel
       let mut pairs : Array (Expr × Expr) := #[]
       let args := rel.getAppArgs
       if args.size ≥ 2 then pairs := pairs.push (args[args.size - 2]!, args[args.size - 1]!)
@@ -925,7 +929,8 @@ private def readTheorem (thmType : Expr) (levelParams : List Name) (explicit? : 
         return some
           { form := if other?.isSome then "iff" else "uniqueness", target
             candidate := (← c.getUserName).toString
-            relation := ← pp rel
+            -- with binder types: `∃ e : K ≃+*o ℝ, …` says what `e` is an isomorphism of
+            relation := (← withOptions (Lean.pp.funBinderTypes.set · true) (ppExpr rel)).pretty (width := 1000)
             relationHead := inner.getAppFn.constName?.getD .anonymous
             conditions, context, variables, specialized, circular }
     return none

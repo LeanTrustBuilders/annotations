@@ -155,6 +155,17 @@ instance : IsTwo Two := ⟨⟨id, id, fun _ => rfl, fun _ => rfl⟩⟩
 @[characterization "the type with two elements"]
 theorem two_iso (K : Type) [IsTwo K] : Nonempty (Iso K Two) := ⟨IsTwo.iso⟩
 
+/-- The element of `Two` named first. -/
+def Two.first : Two := false
+
+-- An isomorphism that also preserves an operation defined on `Two` on its own: the statement names
+-- `Two.first` too, and the relation read is the whole of it.
+@[characterization "the type with two elements, one of them named"]
+theorem two_iso_first (K : Type) [IsTwo K] :
+    ∃ e : Iso K Two, e.to (IsTwo.iso.of false) = Two.first :=
+  ⟨⟨fun k => IsTwo.iso.to k, fun b => IsTwo.iso.of b, IsTwo.iso.to_of, IsTwo.iso.of_to⟩,
+    IsTwo.iso.to_of false⟩
+
 /-! ### A characterization of a special case -/
 
 /-- `(a, a)`, in any type. -/
@@ -231,6 +242,10 @@ TrustAnnotations.Test.CharacterizationTheorem.half by TrustAnnotations.Test.Char
   complete: true
 TrustAnnotations.Test.CharacterizationTheorem.Two by TrustAnnotations.Test.CharacterizationTheorem.two_iso — the type with two elements
   uniqueness, candidate K, up to: Nonempty (Iso K Two) [TrustAnnotations.Test.CharacterizationTheorem.Iso]
+    IsTwo K: shown
+  complete: true
+TrustAnnotations.Test.CharacterizationTheorem.Two by TrustAnnotations.Test.CharacterizationTheorem.two_iso_first — the type with two elements, one of them named
+  uniqueness, candidate K, up to: ∃ (e : Iso K Two), e.to (IsTwo.iso.of false) = Two.first [TrustAnnotations.Test.CharacterizationTheorem.Iso]
     IsTwo K: shown
   complete: true
 TrustAnnotations.Test.CharacterizationTheorem.diag by TrustAnnotations.Test.CharacterizationTheorem.eq_diag_nat

@@ -93,6 +93,12 @@ theorem real_orderRingIso (K : Type*) [Field K] [ConditionallyCompleteLinearOrde
     [IsStrictOrderedRing K] : Nonempty (K ≃+*o ℝ) := …
 ```
 
+The isomorphism pins down only the structure its type names: here `ℝ`'s `+`, `*` and `≤`. Mathlib
+defines `0`, `1`, `-`, `⁻¹`, `<` and the casts on `ℝ` separately, each on the construction, so a
+tool reading the statement cannot take those from the characterization. A statement can name more
+as properties of the isomorphism, `∃ e : K ≃+*o ℝ, e 0 = 0 ∧ e 1 = 1 ∧ …`, and it is read the same
+way, the whole statement being the relation.
+
 ### Domains
 
 ```lean
