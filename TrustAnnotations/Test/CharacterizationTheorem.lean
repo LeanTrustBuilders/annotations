@@ -79,6 +79,19 @@ State them as `@[specifies]` theorems before this one, or apply the attribute af
 theorem eq_quad (n m : Nat) (h₁ : 4 ∣ m) (h₂ : m / 4 = n) : m = quad n := by
   obtain ⟨k, rfl⟩ := h₁; unfold quad; omega
 
+/-- `f n + 1`. -/
+def bump (f : Nat → Nat) (n : Nat) : Nat := f n + 1
+
+@[specifies]
+theorem bump.one_lt (hf : ∀ k, 0 < f k) (n : Nat) : 1 < bump f n := by
+  have := hf n; unfold bump; omega
+
+-- A premise of a specification theorem that is a hypothesis of the characterization as it stands,
+-- a `∀`: it is found by assumption, before its binders are introduced.
+@[characterization]
+theorem eq_bump (f : Nat → Nat) (_hf : ∀ k, 0 < f k) (n m : Nat) (_h₁ : 1 < m) (h₂ : m = f n + 1) :
+    m = bump f n := h₂
+
 /-! ## Reading the annotations back -/
 
 private def dump (env : Environment) : String :=
@@ -119,6 +132,12 @@ TrustAnnotations.Test.CharacterizationTheorem.quad by TrustAnnotations.Test.Char
     4 ∣ m: by TrustAnnotations.Test.CharacterizationTheorem.quad.dvd
     m / 4 = n: open
   complete: false
+TrustAnnotations.Test.CharacterizationTheorem.bump by TrustAnnotations.Test.CharacterizationTheorem.eq_bump
+  uniqueness, candidate m, up to: m = bump f n [Eq]
+    1 < m: by TrustAnnotations.Test.CharacterizationTheorem.bump.one_lt
+    m = f n + 1: shown
+  where: ∀ (k : Nat), 0 < f k
+  complete: true
 -/
 #guard_msgs in
 #eval show CoreM Unit from do IO.println (dump (← getEnv))

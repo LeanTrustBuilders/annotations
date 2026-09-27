@@ -719,11 +719,16 @@ what show it. A condition nothing shows is recorded as such, and the characteriz
 section TheoremForm
 open Meta
 
-/-- Proves `goal` from `lemmas` and the local context: after introductions, by an assumption, by
-reflexivity, by an instance, or by one of `lemmas` whose premises are proved the same way, `fuel`
-applications deep. The lemmas used, or `none`. -/
+/-- Proves `goal` from `lemmas` and the local context: by an assumption, or after introductions by
+an assumption, by reflexivity, by an instance, or by one of `lemmas` whose premises are proved the
+same way, `fuel` applications deep. The lemmas used, or `none`.
+
+The assumption comes first because a premise is often a hypothesis of the theorem as it stands,
+`∀ n, Measurable (A n)` say: introducing its binders first would leave a goal that no hypothesis
+matches. -/
 private partial def proveFrom (lemmas : Array Name) (fuel : Nat) (goal : MVarId) :
     MetaM (Option (Array Name)) := do
+  if (← observing? goal.assumption).isSome then return some #[]
   let (_, goal) ← goal.intros
   if (← observing? goal.assumption).isSome then return some #[]
   if (← observing? goal.applyRfl).isSome then return some #[]
