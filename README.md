@@ -80,8 +80,7 @@ theorems can be assumed, never a condition itself, and only propositions about t
 variables that do not mention the definition.
 
 The payload of such an entry has `role` `"theorem"`, the theorem as `property`, and also `form`
-(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `context` (the
-hypotheses not about the candidate: where the characterization holds) and `complete`.
+(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `context` (every assumption of the theorem not about the candidate, as written: its other hypotheses and all its instance arguments, in brackets; nothing is left out, since a missing assumption would make the characterization look more general than it is), `variables` (its other binders) and `complete`.
 
 ### Domains
 

@@ -51,7 +51,7 @@ one thing an auditing tool must not do.
 Both attributes record their entries in the generic extension of `TrustAnnotations.Core`, as
 annotations `specifies` (payload `{"target", "comment"}`) and `characterization` (payload
 `{"role", "property", "target", "relation", "relationHead", "comment"}`, plus `{"form",
-"candidate", "conditions", "context", "complete"}` for a characterization stated by one theorem) on
+"candidate", "conditions", "context", "variables", "complete"}` for a characterization stated by one theorem) on
 the annotated declaration. A tool reading a compiled project therefore reads them as it reads every other
 attribute of this package, by linking the core once, and `specEntries` and `charEntries` rebuild the
 records below from there. The payload keys are the on-disk format; the structures are not.
@@ -430,9 +430,15 @@ structure CharEntry where
   /-- On a `.theorem` entry: the property, one condition per hypothesis on the candidate (and the
   other side of an iff), each with whether the definition was shown to satisfy it. -/
   conditions : Array CharCondition := #[]
-  /-- On a `.theorem` entry: the theorem's hypotheses that are not about the candidate — where the
-  characterization holds (`Integrable f μ`, `m ≤ m₀`). -/
+  /-- On a `.theorem` entry: every assumption of the theorem that is not about the candidate,
+  as written — its other hypotheses (`m ≤ m₀`, `Integrable f μ`) and all its instance arguments,
+  in brackets (`[CompleteSpace E]`, `[SigmaFinite (μ.trim hm)]`). Where the characterization
+  holds. Nothing is left out: a missing assumption would make the characterization look more
+  general than it is. -/
   context : Array String := #[]
+  /-- On a `.theorem` entry: the theorem's other binders, the variables it is about
+  (`μ : Measure α`), so that the whole context is recorded. -/
+  variables : Array String := #[]
 deriving Repr, Inhabited, BEq
 
 /-- Whether a characterization stated by a theorem is complete: the definition was shown to satisfy
@@ -452,7 +458,7 @@ def CharEntry.toEntry (e : CharEntry) : Entry :=
      ("conditions", Json.arr (e.conditions.map fun c => Json.mkObj [("text", toJson c.text),
         ("proved", toJson c.proved), ("by", toJson (c.provedBy.map (·.toString))),
         ("assuming", toJson c.assuming)])),
-     ("context", toJson e.context), ("complete", toJson e.complete)]
+     ("context", toJson e.context), ("variables", toJson e.variables), ("complete", toJson e.complete)]
   { attr := `characterization, decl := e.declName, payload := (Json.mkObj (base ++ extra)).compress }
 
 /-- Every characterization annotation visible in `env`, in declaration order. The entry point for
@@ -475,7 +481,8 @@ def charEntries (env : Environment) : Array CharEntry :=
              relationHead := if relationHead.isEmpty || relationHead == "[anonymous]" then .anonymous
                else relationHead.toName
              comment := str "comment", form := str "form", candidate := str "candidate"
-             conditions, context := (j.getObjValAs? (Array String) "context").toOption.getD #[] }
+             conditions, context := (j.getObjValAs? (Array String) "context").toOption.getD #[]
+             variables := (j.getObjValAs? (Array String) "variables").toOption.getD #[] }
 
 /-- The definitions `pred` is registered as characterizing. Empty for a predicate that carries no
 `@[characterization property]`, which is what the attribute uses to reject a theorem pointing at
@@ -787,6 +794,7 @@ private structure TheoremShape where
   relationHead : Name
   conditions : Array CharCondition
   context : Array String
+  variables : Array String
   /-- Whether the property mentions the definition it characterizes. -/
   circular : Bool
 
@@ -826,21 +834,22 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
         -- the property: the hypotheses on the candidate, and for an iff the other side
         let mut props : Array Expr := #[]
         let pp (e : Expr) : MetaM String := return (← ppExpr e).pretty (width := 1000)
+        -- Every binder other than the candidate is recorded, with no judgment of what matters: a
+        -- hypothesis about the candidate is the property; any other hypothesis, and every instance
+        -- argument, is an assumption, where the characterization holds; the rest are variables.
         let mut context : Array String := #[]
+        let mut variables : Array String := #[]
         for x in xs do
           if x == cand then continue
           let ty ← inferType x
-          unless ← Meta.isProp ty do continue
-          if ty.containsFVar c then props := props.push ty
-          -- A proposition among the instance arguments is a hypothesis like any other when it is
-          -- about data (`[SigmaFinite (μ.trim hm)]`), and the setting when it is about types only
-          -- (`[CompleteSpace E]`), which is not where the characterization holds.
-          else if (← x.fvarId!.getBinderInfo).isInstImplicit &&
-              !(← (Lean.collectFVars {} ty).fvarIds.anyM fun f => do
-                -- data: neither a type nor an instance on one
-                return !(← f.getType).isSort && !(← f.getBinderInfo).isInstImplicit) then
-            continue
-          else context := context.push (← pp ty)
+          let inst := (← x.fvarId!.getBinderInfo).isInstImplicit
+          if ← Meta.isProp ty then
+            if ty.containsFVar c then props := props.push ty
+            else
+              let s ← pp ty
+              context := context.push (if inst then s!"[{s}]" else s)
+          else if inst then context := context.push s!"[{← pp ty}]"
+          else variables := variables.push s!"{← x.fvarId!.getUserName} : {← pp ty}"
         if let some o := other? then props := props.push o
         if props.isEmpty then continue
         let circular := props.any (·.getUsedConstants.contains target)
@@ -875,7 +884,7 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
             candidate := (← c.getUserName).toString
             relation := ← pp rel
             relationHead := rel.getAppFn.constName?.getD .anonymous
-            conditions, context, circular }
+            conditions, context, variables, circular }
     return none
 
 end TheoremForm
@@ -1018,7 +1027,8 @@ initialize registerBuiltinAttribute {
         addEntry ({ declName, role := .theorem, property := declName, target
                     relation := shape.relation, relationHead := shape.relationHead, comment
                     form := shape.form, candidate := shape.candidate
-                    conditions := shape.conditions, context := shape.context } : CharEntry).toEntry
+                    conditions := shape.conditions, context := shape.context
+                    variables := shape.variables } : CharEntry).toEntry
           anchor
         unless (specEntries env).any fun e => e.theoremName == declName && e.target == target do
           addEntry ({ theoremName := declName, target, comment } : SpecEntry).toEntry anchor

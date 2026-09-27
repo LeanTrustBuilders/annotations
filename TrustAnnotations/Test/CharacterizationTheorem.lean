@@ -127,9 +127,8 @@ class Small (α : Type) : Prop
 /-- Half of `n`. -/
 def half (n : Nat) : Nat := n / 2
 
--- Instance arguments that are propositions about data are where the characterization holds
--- (`[IsPos n]`, like `[SigmaFinite (μ.trim hm)]`); those about types only are the setting
--- (`[Small α]`, like `[CompleteSpace E]`), and are left out.
+-- Every assumption is recorded as where the characterization holds, the instance arguments too,
+-- whatever they are about: `[Small α]` as well as `[IsPos n]`.
 @[characterization]
 theorem eq_half (α : Type) [Small α] (n m : Nat) [IsPos n] (h : m = n / 2) : m = half n := h
 
@@ -194,11 +193,21 @@ TrustAnnotations.Test.CharacterizationTheorem.pick by TrustAnnotations.Test.Char
 TrustAnnotations.Test.CharacterizationTheorem.half by TrustAnnotations.Test.CharacterizationTheorem.eq_half
   uniqueness, candidate m, up to: m = half n [Eq]
     m = n / 2: shown
-  where: IsPos n
+  where: [Small α], [IsPos n]
   complete: true
 -/
 #guard_msgs in
 #eval show CoreM Unit from do IO.println (dump (← getEnv))
+
+-- The rest of the context: the variables the characterization is about.
+/--
+info: #[α : Type, n : Nat]
+-/
+#guard_msgs in
+#eval show CoreM Unit from do
+  let some e := (TrustAnnotations.charEntries (← getEnv)).find?
+    (·.declName == `TrustAnnotations.Test.CharacterizationTheorem.eq_half) | IO.println "none"
+  IO.println e.variables
 
 -- Each characterization theorem is also part of its definition's specification.
 /--
