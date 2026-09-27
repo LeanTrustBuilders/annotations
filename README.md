@@ -81,7 +81,17 @@ theorems can be assumed, never a condition itself, and only propositions about t
 variables that do not mention the definition.
 
 The payload of such an entry has `role` `"theorem"`, the theorem as `property`, and also `form`
-(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `context` (every assumption of the theorem not about the candidate, as written: its other hypotheses and all its instance arguments, in brackets; nothing is left out, since a missing assumption would make the characterization look more general than it is), `variables` (its other binders) and `complete`.
+(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `specialized` (the definition's arguments the characterization fixes rather than quantifies over, `G := ℝ`: it covers that case only), `context` (every assumption of the theorem not about the candidate, as written: its other hypotheses and all its instance arguments, in brackets; nothing is left out, since a missing assumption would make the characterization look more general than it is), `variables` (its other binders) and `complete`.
+
+A type can be characterized up to isomorphism the same way: the candidate is a type, its property
+its instance arguments, and the relation an isomorphism type, possibly under `Nonempty`. Existence
+finds the instances for the definition, in order, each fitted into the next:
+
+```lean
+@[characterization Real "the conditionally complete linearly ordered field"]
+theorem real_orderRingIso (K : Type*) [Field K] [ConditionallyCompleteLinearOrder K]
+    [IsStrictOrderedRing K] : Nonempty (K ≃+*o ℝ) := …
+```
 
 ### Domains
 
