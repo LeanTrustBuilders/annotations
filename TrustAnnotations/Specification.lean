@@ -390,6 +390,9 @@ structure CharCondition where
   proved : Bool
   /-- The theorems that showed it; empty when it followed from the context or by reflexivity. -/
   provedBy : Array Name := #[]
+  /-- The premises of those theorems that were assumed rather than shown: conditions on the
+  definition's arguments under which it satisfies this condition. -/
+  assuming : Array String := #[]
 deriving Repr, Inhabited, BEq
 
 /-- One `@[characterization …]` annotation: the declaration it was written on, which part of a
@@ -447,7 +450,8 @@ def CharEntry.toEntry (e : CharEntry) : Entry :=
   let extra := if e.role != .theorem then [] else
     [("form", toJson e.form), ("candidate", toJson e.candidate),
      ("conditions", Json.arr (e.conditions.map fun c => Json.mkObj [("text", toJson c.text),
-        ("proved", toJson c.proved), ("by", toJson (c.provedBy.map (·.toString)))])),
+        ("proved", toJson c.proved), ("by", toJson (c.provedBy.map (·.toString))),
+        ("assuming", toJson c.assuming)])),
      ("context", toJson e.context), ("complete", toJson e.complete)]
   { attr := `characterization, decl := e.declName, payload := (Json.mkObj (base ++ extra)).compress }
 
@@ -464,7 +468,8 @@ def charEntries (env : Environment) : Array CharEntry :=
         let text ← (c.getObjValAs? String "text").toOption
         let proved := (c.getObjValAs? Bool "proved").toOption.getD false
         let provedBy := ((c.getObjValAs? (Array String) "by").toOption.getD #[]).map (·.toName)
-        return ({ text, proved, provedBy } : CharCondition)
+        let assuming := (c.getObjValAs? (Array String) "assuming").toOption.getD #[]
+        return ({ text, proved, provedBy, assuming } : CharCondition)
     return { declName := e.decl, role, property := (str "property").toName
              target := (str "target").toName, relation := str "relation"
              relationHead := if relationHead.isEmpty || relationHead == "[anonymous]" then .anonymous
@@ -714,6 +719,14 @@ reflexivity. For a uniqueness theorem, each hypothesis `Hᵢ (d …)` is proved 
 theorems declared so far, applied a few deep, with the theorem's other hypotheses in context — so
 existence costs no new declaration either: the specification theorems a definition has anyway are
 what show it. A condition nothing shows is recorded as such, and the characterization as incomplete.
+
+Existence often needs more than uniqueness does: `⟨M⟩` compensates `M²` only for a square-integrable
+adapted `M`, while any two compensators agree without that. So a premise of a specification theorem
+that the context does not provide may be *assumed*, and is recorded as a condition under which `d`
+has the property (`CharCondition.assuming`). The uniqueness theorem then needs no hypothesis its own
+proof does not use. Only a premise can be assumed, never the condition itself, and only a
+proposition about the theorem's own variables that does not mention `d`: a condition on `d`'s
+arguments, not on its value.
 -/
 
 section TheoremForm
@@ -721,33 +734,48 @@ open Meta
 
 /-- Proves `goal` from `lemmas` and the local context: by an assumption, or after introductions by
 an assumption, by reflexivity, by an instance, or by one of `lemmas` whose premises are proved the
-same way, `fuel` applications deep. The lemmas used, or `none`.
+same way, `fuel` applications deep. The lemmas used and the premises assumed, or `none`.
 
 The assumption comes first because a premise is often a hypothesis of the theorem as it stands,
 `∀ n, Measurable (A n)` say: introducing its binders first would leave a goal that no hypothesis
-matches. -/
-private partial def proveFrom (lemmas : Array Name) (fuel : Nat) (goal : MVarId) :
-    MetaM (Option (Array Name)) := do
-  if (← observing? goal.assumption).isSome then return some #[]
+matches.
+
+A premise of an applied lemma (`premise`) that nothing proves may be *assumed* when `assumable` says
+so: it is then recorded as a condition under which the definition has the property. The goal itself
+never is. Among the lemmas that apply, one needing no assumption is taken at once, and otherwise
+the one needing fewest. -/
+private partial def proveFrom (lemmas : Array Name) (assumable : Expr → MetaM Bool) (fuel : Nat)
+    (goal : MVarId) (premise : Bool := false) : MetaM (Option (Array Name × Array Expr)) := do
+  let original ← instantiateMVars (← goal.getType)
+  if (← observing? goal.assumption).isSome then return some (#[], #[])
   let (_, goal) ← goal.intros
-  if (← observing? goal.assumption).isSome then return some #[]
-  if (← observing? goal.applyRfl).isSome then return some #[]
+  if (← observing? goal.assumption).isSome then return some (#[], #[])
+  if (← observing? goal.applyRfl).isSome then return some (#[], #[])
   let type ← goal.getType
   if (← isClass? type).isSome then
     if let some inst ← observing? (synthInstance type) then
       goal.assign inst
-      return some #[]
-  if fuel == 0 then return none
-  for l in lemmas do
-    let r ← observing? do
-      let subgoals ← goal.apply (← mkConstWithFreshMVarLevels l) { allowSynthFailures := true }
-      let mut used := #[l]
-      for g in subgoals do
-        if ← g.isAssigned then continue
-        let some u ← proveFrom lemmas (fuel - 1) g | throwError "a premise is not proved"
-        used := used ++ u
-      return used
-    if let some used := r then return some used
+      return some (#[], #[])
+  let mut best : Option (Array Name × Array Expr) := none
+  if fuel > 0 then
+    for l in lemmas do
+      -- Each trial in a state of its own: only whether it succeeds, and what it assumes, is kept.
+      let r ← withoutModifyingState <| observing? do
+        let subgoals ← goal.apply (← mkConstWithFreshMVarLevels l) { allowSynthFailures := true }
+        let mut used := #[l]
+        let mut assumed := #[]
+        for g in subgoals do
+          if ← g.isAssigned then continue
+          let some (u, a) ← proveFrom lemmas assumable (fuel - 1) g (premise := true)
+            | throwError "a premise is not proved"
+          used := used ++ u
+          assumed := assumed ++ a
+        return (used, assumed)
+      if let some (u, a) := r then
+        if a.isEmpty then return some (u, a)
+        if best.all (a.size < ·.2.size) then best := some (u, a)
+  if best.isSome then return best
+  if premise && (← assumable original) then return some (#[], #[original])
   return none
 
 /-- What a characterization stated by one theorem says, read off its statement. -/
@@ -810,6 +838,14 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
         let circular := props.any (·.getUsedConstants.contains target)
         -- existence: the definition in the candidate's place satisfies each condition
         let lemmas := lemmasFor target
+        -- A premise may be assumed when it is a proposition about the theorem's own variables,
+        -- fully determined, and not about the definition: a condition on its arguments.
+        let ours := xs.map (·.fvarId!)
+        let assumable (e : Expr) : MetaM Bool := do
+          let e ← instantiateMVars e
+          if e.hasMVar || e.hasAnyFVar (!ours.contains ·) then return false
+          if e.getUsedConstants.contains target then return false
+          Meta.isProp e
         let mut conditions := #[]
         for pr in props do
           -- the iff's other side follows from the theorem once `R (d …) (d …)` does
@@ -817,10 +853,15 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
             else pr.replaceFVar cand defn
           let proof ← withoutModifyingState do
             let g ← mkFreshExprMVar goalType
-            proveFrom lemmas 3 g.mvarId!
+            proveFrom lemmas assumable 3 g.mvarId!
+          let (used, assumed) := proof.getD (#[], #[])
+          let mut assuming := #[]
+          for a in assumed do
+            let s := (← ppExpr a).pretty (width := 1000)
+            unless assuming.contains s do assuming := assuming.push s
           conditions := conditions.push
             { text := (← ppExpr pr).pretty (width := 1000), proved := proof.isSome
-              provedBy := (proof.getD #[]).toList.eraseDups.toArray }
+              provedBy := used.toList.eraseDups.toArray, assuming }
         return some
           { form := if other?.isSome then "iff" else "uniqueness", target
             candidate := (← c.getUserName).toString
