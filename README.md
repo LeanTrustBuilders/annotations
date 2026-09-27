@@ -28,9 +28,11 @@ a dataset facet named after it.
 | `@[example_of d]` | a theorem | this theorem states that a concrete object satisfies the definition `d`: evidence that `d` is not vacuous |
 | `@[nonexample_of d]` | a theorem | this theorem states that a concrete object does *not* satisfy `d`: evidence that `d` is not trivially true |
 | `@[specifies d "why"]` | a theorem | this theorem is part of the specification of the definition `d`: one of the properties its author offers as evidence that `d` is the intended one. `d` may be omitted when the theorem sits in `d`'s namespace; repeat the attribute for several definitions |
-| `@[characterization property d "why"]` | a predicate `P` | `P` characterizes the definition `d`: `d` is *the* object with property `P`, up to a relation |
+| `@[characterization "why"]`, `@[characterization d "why"]` | a theorem | this theorem characterizes a definition, with no predicate declared for it: an iff `R x (d …) ↔ property of x`, or a uniqueness theorem `hypotheses on x → R x (d …)` whose hypotheses are the property. `d` and `R` are read off the conclusion; that `d` satisfies the property is shown from its `@[specifies]` theorems (checked; see below) |
+| `@[characterization property d "why"]` | a predicate `P` | `P` characterizes the definition `d`: `d` is *the* object with property `P`, up to a relation. For a property that is worth a name of its own; otherwise the form above needs no predicate |
 | `@[characterization existence]` | a theorem | `d` satisfies `P` (checked, with `isDefEq`) |
 | `@[characterization uniqueness]` | a theorem | `P` determines its subject up to a relation, read off the conclusion (checked) |
+| `@[domain (proposition) "note"]` | a definition | where the definition is meant to apply: a proposition about its arguments, under their own names (`@[domain (0 ≤ p ∧ 0 < q)]`), or a function of its explicit arguments (`@[domain (fun n => 0 < n)]`). Outside it, the value is a junk value or a convention. `attribute [domain …] d` also works on a definition of another library, for a catalogue |
 
 `claim`, `example_of` and `nonexample_of` check that they are applied to a proposition, are global,
 and are applied once.
@@ -47,6 +49,49 @@ def IsEven (n : Nat) : Prop := n % 2 = 0
 theorem isEven_add {m n : Nat} (hm : IsEven m) (hn : IsEven n) : IsEven (m + n) := by
   unfold IsEven at *; omega
 ```
+
+### A characterization with no predicate
+
+```lean
+def double (n : Nat) : Nat := n + n
+
+@[characterization "the defining equation"]
+theorem eq_double_iff (n m : Nat) : m = double n ↔ m = n + n := …
+```
+
+The theorem is the characterization: the candidate `m` is a variable it quantifies over, `double`
+is the definition (read off the other side of the relation, or named as
+`@[characterization double]`), and `=` is the relation. For an iff, `double` satisfies the
+property by reflexivity of the relation. For a uniqueness theorem, each hypothesis on the candidate
+is shown for the definition from its `@[specifies]` theorems declared before, applied a few deep, with
+the theorem's other hypotheses in context. On Mathlib's conditional expectation, the three
+hypotheses of `ae_eq_condExp_of_forall_setIntegral_eq` are shown this way from restatements of
+`integrable_condExp`, `setIntegral_condExp` and `stronglyMeasurable_condExp`. A condition nothing
+shows is recorded as open, with a warning, and the characterization as incomplete; applying the
+attribute later (`attribute [characterization] thm`) picks up specification theorems declared in
+between.
+
+The payload of such an entry has `role` `"theorem"`, the theorem as `property`, and also `form`
+(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by}`), `context` (the
+hypotheses not about the candidate: where the characterization holds) and `complete`.
+
+### Domains
+
+```lean
+@[domain (0 ≤ p ∧ 0 < q) "0 · log (0 / q) = 0, by convention"]
+noncomputable def klTerm (p q : ℝ) : ℝ := p * Real.log (p / q)
+
+attribute [domain (0 < x)] Real.log   -- in a catalogue module
+```
+
+The payload records the domain as written (`statement`), the `note`, `source` (`"author"` when
+declared in the definition's own module, `"catalogue"` otherwise) and `predicate`: the domain is also
+stored as a hidden predicate over the definition's arguments, `klTerm._domain`, so that a tool can
+use the proposition itself. Its name is internal, so documentation, search and completion skip it,
+and its body is exported under the module system. `domainEntries` and `domainOf?` read domains
+back.
+
+### Where these come from
 
 `specifies` and `characterization` come from the `Characterization` package (earlier `LeanSpec`, in
 `LeanMachineLearning/exposition`), moved here with their syntax, checks and tests unchanged
