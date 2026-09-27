@@ -439,6 +439,10 @@ structure CharEntry where
   /-- On a `.theorem` entry: the theorem's other binders, the variables it is about
   (`μ : Measure α`), so that the whole context is recorded. -/
   variables : Array String := #[]
+  /-- On a `.theorem` entry: the definition's arguments that the characterization fixes rather than
+  quantifies over (`G := ℝ`), so that it covers only that case. Empty when it is as general as the
+  definition. -/
+  specialized : Array String := #[]
 deriving Repr, Inhabited, BEq
 
 /-- Whether a characterization stated by a theorem is complete: the definition was shown to satisfy
@@ -458,7 +462,8 @@ def CharEntry.toEntry (e : CharEntry) : Entry :=
      ("conditions", Json.arr (e.conditions.map fun c => Json.mkObj [("text", toJson c.text),
         ("proved", toJson c.proved), ("by", toJson (c.provedBy.map (·.toString))),
         ("assuming", toJson c.assuming)])),
-     ("context", toJson e.context), ("variables", toJson e.variables), ("complete", toJson e.complete)]
+     ("context", toJson e.context), ("variables", toJson e.variables),
+     ("specialized", toJson e.specialized), ("complete", toJson e.complete)]
   { attr := `characterization, decl := e.declName, payload := (Json.mkObj (base ++ extra)).compress }
 
 /-- Every characterization annotation visible in `env`, in declaration order. The entry point for
@@ -482,7 +487,8 @@ def charEntries (env : Environment) : Array CharEntry :=
                else relationHead.toName
              comment := str "comment", form := str "form", candidate := str "candidate"
              conditions, context := (j.getObjValAs? (Array String) "context").toOption.getD #[]
-             variables := (j.getObjValAs? (Array String) "variables").toOption.getD #[] }
+             variables := (j.getObjValAs? (Array String) "variables").toOption.getD #[]
+             specialized := (j.getObjValAs? (Array String) "specialized").toOption.getD #[] }
 
 /-- The definitions `pred` is registered as characterizing. Empty for a predicate that carries no
 `@[characterization property]`, which is what the attribute uses to reject a theorem pointing at
@@ -795,6 +801,7 @@ private structure TheoremShape where
   conditions : Array CharCondition
   context : Array String
   variables : Array String
+  specialized : Array String
   /-- Whether the property mentions the definition it characterizes. -/
   circular : Bool
 
@@ -815,24 +822,33 @@ private def definitionIn? (defn : Expr) (explicit? : Option Name) : MetaM (Optio
 /-- Reads `thmType` as a characterization stated by one theorem, trying the relation's two sides as
 the candidate, and for an iff its two sides as the relation. Existence is proved from `lemmasFor`
 the definition found. `none` when no reading fits. -/
-private def readTheorem (thmType : Expr) (explicit? : Option Name)
+private def readTheorem (thmType : Expr) (levelParams : List Name) (explicit? : Option Name)
     (lemmasFor : Name → Array Name) : MetaM (Option TheoremShape) :=
   forallTelescopeReducing thmType fun xs concl => do
     let readings : Array (Expr × Option Expr) := match concl.iff? with
       | some (a, b) => #[(a, some b), (b, some a)]
       | none => #[(concl, none)]
     for (rel, other?) in readings do
+      -- The candidate and the definition are the relation's last two arguments (`g =ᵐ[μ] condExp …`),
+      -- or, for a type determined up to isomorphism, the first two explicit arguments of the
+      -- isomorphism type (`Nonempty (K ≃+*o ℝ)`), whose last arguments are instances.
+      let inner := if rel.isAppOfArity ``Nonempty 1 then rel.appArg! else rel
+      let mut pairs : Array (Expr × Expr) := #[]
       let args := rel.getAppArgs
-      if args.size < 2 then continue
-      let lhs := args[args.size - 2]!
-      let rhs := args[args.size - 1]!
-      for (cand, defn) in #[(lhs, rhs), (rhs, lhs)] do
+      if args.size ≥ 2 then pairs := pairs.push (args[args.size - 2]!, args[args.size - 1]!)
+      if inner.getAppFn.isConst then
+        let info ← getFunInfoNArgs inner.getAppFn inner.getAppNumArgs
+        let explicitArgs := (inner.getAppArgs.zip info.paramInfo).filterMap fun (a, i) =>
+          if i.binderInfo.isExplicit then some a else none
+        if explicitArgs.size ≥ 2 then pairs := pairs.push (explicitArgs[0]!, explicitArgs[1]!)
+      for (cand, defn) in pairs.flatMap (fun (a, b) => #[(a, b), (b, a)]) do
         unless cand.isFVar && xs.contains cand do continue
         let c := cand.fvarId!
         if defn.containsFVar c then continue
         let some target ← definitionIn? defn explicit? | continue
         -- the property: the hypotheses on the candidate, and for an iff the other side
-        let mut props : Array Expr := #[]
+        -- each with its binder when it is an instance argument, whose value later conditions use
+        let mut props : Array (Expr × Option Expr) := #[]
         let pp (e : Expr) : MetaM String := return (← ppExpr e).pretty (width := 1000)
         -- Every binder other than the candidate is recorded, with no judgment of what matters: a
         -- hypothesis about the candidate is the property; any other hypothesis, and every instance
@@ -843,16 +859,29 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
           if x == cand then continue
           let ty ← inferType x
           let inst := (← x.fvarId!.getBinderInfo).isInstImplicit
-          if ← Meta.isProp ty then
-            if ty.containsFVar c then props := props.push ty
+          -- An instance argument about the candidate is part of the property: what a type
+          -- characterized up to isomorphism has to be (`[ConditionallyCompleteLinearOrderedField K]`).
+          if (← Meta.isProp ty) || inst then
+            if ty.containsFVar c then props := props.push (ty, if inst then some x else none)
             else
               let s ← pp ty
               context := context.push (if inst then s!"[{s}]" else s)
-          else if inst then context := context.push s!"[{← pp ty}]"
           else variables := variables.push s!"{← x.fvarId!.getUserName} : {← pp ty}"
-        if let some o := other? then props := props.push o
+        if let some o := other? then props := props.push (o, none)
         if props.isEmpty then continue
-        let circular := props.any (·.getUsedConstants.contains target)
+        -- Where the definition is applied to something other than a variable of the theorem, the
+        -- characterization covers that case only (the Bochner integral at `G := ℝ`). Instance
+        -- arguments follow from the others and are not counted.
+        let mut specialized : Array String := #[]
+        if defn.getAppFn.constName? == some target then
+          let dInfo ← getFunInfoNArgs defn.getAppFn defn.getAppNumArgs
+          let names := (← getConstInfo target).type.getForallBinderNames
+          for ((a, i), k) in (defn.getAppArgs.zip dInfo.paramInfo).zipIdx do
+            if i.binderInfo.isInstImplicit then continue
+            let a := (← instantiateMVars a).eta
+            unless a.isFVar && xs.contains a do
+              specialized := specialized.push s!"{names.getD k `_} := {← pp a}"
+        let circular := props.any (·.1.getUsedConstants.contains target)
         -- existence: the definition in the candidate's place satisfies each condition
         let lemmas := lemmasFor target
         -- A premise may be assumed when it is a proposition about the theorem's own variables,
@@ -864,13 +893,27 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
           if e.getUsedConstants.contains target then return false
           Meta.isProp e
         let mut conditions := #[]
-        for pr in props do
+        -- The definition in the candidate's place, and for an instance condition the instance found
+        -- for it in the binder's place: later conditions mention the earlier instances
+        -- (`[IsStrictOrderedRing K]` depends on `[Field K]`).
+        let mut subst : Array (Expr × Expr) := #[(cand, defn)]
+        -- The theorem's universes, fitted to the definition's: a type characterized up to
+        -- isomorphism is quantified over `K : Type u`, and `ℝ` lives in `Type`.
+        let lvls ← levelParams.mapM fun _ => mkFreshLevelMVar
+        let fit (e : Expr) : MetaM Expr := instantiateMVars (e.instantiateLevelParams levelParams lvls)
+        discard <| isDefEq (← fit (← inferType cand)) (← inferType defn)
+        for (pr, binder?) in props do
           -- the iff's other side follows from the theorem once `R (d …) (d …)` does
-          let goalType := if other?.isSome && pr == other?.get! then rel.replaceFVar cand defn
-            else pr.replaceFVar cand defn
-          let proof ← withoutModifyingState do
-            let g ← mkFreshExprMVar goalType
-            proveFrom lemmas assumable 3 g.mvarId!
+          let goalType ← fit ((if other?.isSome && pr == other?.get! then rel else pr).replaceFVars
+            (subst.map (·.1)) (subst.map (·.2)))
+          let proof ← match binder? with
+            | some x =>
+              match ← observing? (synthInstance goalType) with
+              | some v => subst := subst.push (x, v); pure (some (#[], #[]))
+              | none => pure none
+            | none => withoutModifyingState do
+              let g ← mkFreshExprMVar goalType
+              proveFrom lemmas assumable 3 g.mvarId!
           let (used, assumed) := proof.getD (#[], #[])
           let mut assuming := #[]
           for a in assumed do
@@ -883,8 +926,8 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
           { form := if other?.isSome then "iff" else "uniqueness", target
             candidate := (← c.getUserName).toString
             relation := ← pp rel
-            relationHead := rel.getAppFn.constName?.getD .anonymous
-            conditions, context, variables, circular }
+            relationHead := inner.getAppFn.constName?.getD .anonymous
+            conditions, context, variables, specialized, circular }
     return none
 
 end TheoremForm
@@ -998,7 +1041,7 @@ initialize registerBuiltinAttribute {
         let lemmasFor (target : Name) : Array Name :=
           (specTheoremsFor env target).filterMap fun e =>
             if e.theoremName == declName then none else some e.theoremName
-        let some shape ← Meta.MetaM.run' (readTheorem info.type explicit? lemmasFor)
+        let some shape ← Meta.MetaM.run' (readTheorem info.type info.levelParams explicit? lemmasFor)
           | throwError "`{declName}` does not state a characterization. That would be either an \
               iff, `R x (definition …) ↔ property of x`, or a uniqueness theorem, \
               `hypotheses on x → R x (definition …)`, where `x` is a variable of the theorem and \
@@ -1028,7 +1071,7 @@ initialize registerBuiltinAttribute {
                     relation := shape.relation, relationHead := shape.relationHead, comment
                     form := shape.form, candidate := shape.candidate
                     conditions := shape.conditions, context := shape.context
-                    variables := shape.variables } : CharEntry).toEntry
+                    variables := shape.variables, specialized := shape.specialized } : CharEntry).toEntry
           anchor
         unless (specEntries env).any fun e => e.theoremName == declName && e.target == target do
           addEntry ({ theoremName := declName, target, comment } : SpecEntry).toEntry anchor

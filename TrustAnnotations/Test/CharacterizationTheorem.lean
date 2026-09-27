@@ -132,6 +132,39 @@ def half (n : Nat) : Nat := n / 2
 @[characterization]
 theorem eq_half (α : Type) [Small α] (n m : Nat) [IsPos n] (h : m = n / 2) : m = half n := h
 
+/-! ### A type determined up to isomorphism -/
+
+/-- An isomorphism of types, as Lean core has none. -/
+structure Iso (α β : Type) where
+  to : α → β
+  of : β → α
+  to_of : ∀ b, to (of b) = b
+  of_to : ∀ a, of (to a) = a
+
+/-- Being a type with exactly two elements, as structure. -/
+class IsTwo (K : Type) where
+  iso : Iso K Bool
+
+/-- The type with two elements. -/
+def Two : Type := Bool
+
+instance : IsTwo Two := ⟨⟨id, id, fun _ => rfl, fun _ => rfl⟩⟩
+
+-- The candidate is a type, its property the instance argument `[IsTwo K]`, and the relation an
+-- isomorphism type; `Two` has the property because the instance is found.
+@[characterization "the type with two elements"]
+theorem two_iso (K : Type) [IsTwo K] : Nonempty (Iso K Two) := ⟨IsTwo.iso⟩
+
+/-! ### A characterization of a special case -/
+
+/-- `(a, a)`, in any type. -/
+def diag (α : Type) (a : α) : α × α := (a, a)
+
+-- It characterizes `diag` at `α := Nat` only: recorded as such.
+@[characterization]
+theorem eq_diag_nat (a : Nat) (p : Nat × Nat) (h₁ : p.1 = a) (h₂ : p.2 = a) : p = diag Nat a := by
+  cases p; simp_all [diag]
+
 /-! ## Reading the annotations back -/
 
 private def dump (env : Environment) : String :=
@@ -152,6 +185,7 @@ private def dump (env : Environment) : String :=
         s!"  {e.form}, candidate {e.candidate}, up to: {e.relation} [{e.relationHead}]" ] ++
       conds ++
       (if e.context.isEmpty then [] else [s!"  where: {String.intercalate ", " e.context.toList}"]) ++
+      (if e.specialized.isEmpty then [] else [s!"  only for: {String.intercalate ", " e.specialized.toList}"]) ++
       [ s!"  complete: {c.isComplete}" ]
 
 /--
@@ -194,6 +228,16 @@ TrustAnnotations.Test.CharacterizationTheorem.half by TrustAnnotations.Test.Char
   uniqueness, candidate m, up to: m = half n [Eq]
     m = n / 2: shown
   where: [Small α], [IsPos n]
+  complete: true
+TrustAnnotations.Test.CharacterizationTheorem.Two by TrustAnnotations.Test.CharacterizationTheorem.two_iso — the type with two elements
+  uniqueness, candidate K, up to: Nonempty (Iso K Two) [TrustAnnotations.Test.CharacterizationTheorem.Iso]
+    IsTwo K: shown
+  complete: true
+TrustAnnotations.Test.CharacterizationTheorem.diag by TrustAnnotations.Test.CharacterizationTheorem.eq_diag_nat
+  uniqueness, candidate p, up to: p = diag Nat a [Eq]
+    p.fst = a: shown
+    p.snd = a: shown
+  only for: α := Nat
   complete: true
 -/
 #guard_msgs in
