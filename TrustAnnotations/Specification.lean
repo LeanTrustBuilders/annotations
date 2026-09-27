@@ -50,14 +50,16 @@ one thing an auditing tool must not do.
 
 Both attributes record their entries in the generic extension of `TrustAnnotations.Core`, as
 annotations `specifies` (payload `{"target", "comment"}`) and `characterization` (payload
-`{"role", "property", "target", "relation", "relationHead", "comment"}`) on the annotated
-declaration. A tool reading a compiled project therefore reads them as it reads every other
+`{"role", "property", "target", "relation", "relationHead", "comment"}`, plus `{"form",
+"candidate", "conditions", "context", "complete"}` for a characterization stated by one theorem) on
+the annotated declaration. A tool reading a compiled project therefore reads them as it reads every other
 attribute of this package, by linking the core once, and `specEntries` and `charEntries` rebuild the
 records below from there. The payload keys are the on-disk format; the structures are not.
 
 These attributes were first written as the `Characterization` package (and before that as
 `LeanSpec`, in `LeanMachineLearning/exposition`), with extensions of their own; they moved here so
-that one extension serves every annotation. The syntax and the checks are unchanged.
+that one extension serves every annotation. Since then `@[characterization]` has gained a form with
+no keyword and no predicate: a characterization stated by one theorem.
 
 ## The attribute name
 
@@ -359,6 +361,9 @@ inductive CharRole where
   | existence
   /-- The theorem that the predicate determines its subject up to a relation. -/
   | uniqueness
+  /-- A characterization stated by one theorem, with no predicate: an iff, or a uniqueness theorem
+  whose hypotheses are the property (`@[characterization]` with no keyword). -/
+  | «theorem»
 deriving Repr, Inhabited, BEq
 
 /-- The keyword that selects this role in the attribute. -/
@@ -366,13 +371,26 @@ def CharRole.keyword : CharRole → String
   | .property => "property"
   | .existence => "existence"
   | .uniqueness => "uniqueness"
+  | .theorem => "theorem"
 
 /-- The role a keyword selects. -/
 def CharRole.ofKeyword? : String → Option CharRole
   | "property" => some .property
   | "existence" => some .existence
   | "uniqueness" => some .uniqueness
+  | "theorem" => some .theorem
   | _ => none
+
+/-- One condition of a characterization stated by a theorem: a hypothesis on the candidate object
+(or, for an iff, the property side), and whether the definition was shown to satisfy it. -/
+structure CharCondition where
+  /-- The condition, pretty-printed with the theorem's own variable names. -/
+  text : String
+  /-- Whether the definition, put in the candidate's place, was shown to satisfy it. -/
+  proved : Bool
+  /-- The theorems that showed it; empty when it followed from the context or by reflexivity. -/
+  provedBy : Array Name := #[]
+deriving Repr, Inhabited, BEq
 
 /-- One `@[characterization …]` annotation: the declaration it was written on, which part of a
 characterization that declaration is, and the predicate/definition pair the part belongs to.
@@ -401,15 +419,37 @@ structure CharEntry where
   relationHead : Name := .anonymous
   /-- The author's justification, as written in the attribute. Empty when omitted. -/
   comment : String := ""
+  /-- On a `.theorem` entry: `"iff"` or `"uniqueness"`. Empty on the other roles. -/
+  form : String := ""
+  /-- On a `.theorem` entry: the name of the candidate object, the variable the relation relates to
+  the definition. -/
+  candidate : String := ""
+  /-- On a `.theorem` entry: the property, one condition per hypothesis on the candidate (and the
+  other side of an iff), each with whether the definition was shown to satisfy it. -/
+  conditions : Array CharCondition := #[]
+  /-- On a `.theorem` entry: the theorem's hypotheses that are not about the candidate — where the
+  characterization holds (`Integrable f μ`, `m ≤ m₀`). -/
+  context : Array String := #[]
 deriving Repr, Inhabited, BEq
+
+/-- Whether a characterization stated by a theorem is complete: the definition was shown to satisfy
+every condition, so that it is *the* object with the property. The other roles are completed by
+assembling their parts (`Characterization.isComplete`). -/
+def CharEntry.complete (e : CharEntry) : Bool :=
+  e.role == .theorem && e.conditions.all (·.proved)
 
 /-- The generic-extension entry recording a `@[characterization]` annotation. -/
 def CharEntry.toEntry (e : CharEntry) : Entry :=
-  { attr := `characterization, decl := e.declName
-    payload := (Json.mkObj [("role", toJson e.role.keyword),
+  let base := [("role", toJson e.role.keyword),
       ("property", toJson e.property.toString), ("target", toJson e.target.toString),
       ("relation", toJson e.relation), ("relationHead", toJson e.relationHead.toString),
-      ("comment", toJson e.comment)]).compress }
+      ("comment", toJson e.comment)]
+  let extra := if e.role != .theorem then [] else
+    [("form", toJson e.form), ("candidate", toJson e.candidate),
+     ("conditions", Json.arr (e.conditions.map fun c => Json.mkObj [("text", toJson c.text),
+        ("proved", toJson c.proved), ("by", toJson (c.provedBy.map (·.toString)))])),
+     ("context", toJson e.context), ("complete", toJson e.complete)]
+  { attr := `characterization, decl := e.declName, payload := (Json.mkObj (base ++ extra)).compress }
 
 /-- Every characterization annotation visible in `env`, in declaration order. The entry point for
 tools that want the parts; most will want `characterizations` instead, which assembles them. -/
@@ -419,11 +459,18 @@ def charEntries (env : Environment) : Array CharEntry :=
     let str (k : String) : String := (j.getObjValAs? String k).toOption.getD ""
     let role ← CharRole.ofKeyword? (str "role")
     let relationHead := str "relationHead"
+    let conditions := ((j.getObjValAs? (Array Json) "conditions").toOption.getD #[]).filterMap
+      fun c => do
+        let text ← (c.getObjValAs? String "text").toOption
+        let proved := (c.getObjValAs? Bool "proved").toOption.getD false
+        let provedBy := ((c.getObjValAs? (Array String) "by").toOption.getD #[]).map (·.toName)
+        return ({ text, proved, provedBy } : CharCondition)
     return { declName := e.decl, role, property := (str "property").toName
              target := (str "target").toName, relation := str "relation"
              relationHead := if relationHead.isEmpty || relationHead == "[anonymous]" then .anonymous
                else relationHead.toName
-             comment := str "comment" }
+             comment := str "comment", form := str "form", candidate := str "candidate"
+             conditions, context := (j.getObjValAs? (Array String) "context").toOption.getD #[] }
 
 /-- The definitions `pred` is registered as characterizing. Empty for a predicate that carries no
 `@[characterization property]`, which is what the attribute uses to reject a theorem pointing at
@@ -463,7 +510,12 @@ you need this for a whole library at once. -/
 def characterizations (env : Environment) : Array Characterization :=
   let entries := charEntries env
   entries.filterMap fun p =>
-    if p.role != .property then none
+    -- A characterization stated by one theorem is its own bundle: the theorem is the uniqueness
+    -- half, and the existence half too once the definition was shown to satisfy every condition.
+    if p.role == .theorem then
+      some { property := p.declName, target := p.target, comment := p.comment
+             existence := if p.complete then #[p] else #[], uniqueness := #[p] }
+    else if p.role != .property then none
     else some {
       property := p.property
       target := p.target
@@ -646,6 +698,134 @@ private def andList (ns : Array Name) : MessageData :=
   | n :: rest =>
     m!"{MessageData.joinSep (rest.reverse.map fun r => m!"`{r}`") ", "} and `{n}`"
 
+/-! ### A characterization stated by one theorem
+
+`@[characterization]` with no keyword needs no predicate. The theorem is the characterization:
+
+* an **iff**, `R x (d …) ↔ Q x`: `Q` is the property, and the theorem says both halves at once;
+* a **uniqueness theorem**, `H₁ x → … → Hₙ x → R x (d …)`: its hypotheses on `x` are the property.
+
+`x` is the *candidate*, a variable the theorem quantifies over; `d` is the definition, read off the
+other side of the relation (or named, as `@[characterization d]`); `R` is the relation, read off the
+conclusion as for a uniqueness theorem of the other form.
+
+The property is only half of it: `d` has to satisfy it. For an iff that is `R (d …) (d …)`, so
+reflexivity. For a uniqueness theorem, each hypothesis `Hᵢ (d …)` is proved from the `@[specifies d]`
+theorems declared so far, applied a few deep, with the theorem's other hypotheses in context — so
+existence costs no new declaration either: the specification theorems a definition has anyway are
+what show it. A condition nothing shows is recorded as such, and the characterization as incomplete.
+-/
+
+section TheoremForm
+open Meta
+
+/-- Proves `goal` from `lemmas` and the local context: after introductions, by an assumption, by
+reflexivity, by an instance, or by one of `lemmas` whose premises are proved the same way, `fuel`
+applications deep. The lemmas used, or `none`. -/
+private partial def proveFrom (lemmas : Array Name) (fuel : Nat) (goal : MVarId) :
+    MetaM (Option (Array Name)) := do
+  let (_, goal) ← goal.intros
+  if (← observing? goal.assumption).isSome then return some #[]
+  if (← observing? goal.applyRfl).isSome then return some #[]
+  let type ← goal.getType
+  if (← isClass? type).isSome then
+    if let some inst ← observing? (synthInstance type) then
+      goal.assign inst
+      return some #[]
+  if fuel == 0 then return none
+  for l in lemmas do
+    let r ← observing? do
+      let subgoals ← goal.apply (← mkConstWithFreshMVarLevels l) { allowSynthFailures := true }
+      let mut used := #[l]
+      for g in subgoals do
+        if ← g.isAssigned then continue
+        let some u ← proveFrom lemmas (fuel - 1) g | throwError "a premise is not proved"
+        used := used ++ u
+      return used
+    if let some used := r then return some used
+  return none
+
+/-- What a characterization stated by one theorem says, read off its statement. -/
+private structure TheoremShape where
+  form : String
+  target : Name
+  candidate : String
+  relation : String
+  relationHead : Name
+  conditions : Array CharCondition
+  context : Array String
+  /-- Whether the property mentions the definition it characterizes. -/
+  circular : Bool
+
+/-- The definition `defn` is `target` applied to arguments, when `explicit?` names it; otherwise the
+head constant of `defn`, when that is a definition. -/
+private def definitionIn? (defn : Expr) (explicit? : Option Name) : MetaM (Option Name) := do
+  match explicit? with
+  | some t =>
+    for d in ← openTargetAtEachArity t do
+      if ← withoutModifyingState (isDefEq defn d) then return some t
+    return none
+  | none =>
+    let some h := defn.getAppFn.constName? | return none
+    let some info := (← getEnv).find? h | return none
+    if ← Meta.isProp info.type then return none
+    return some h
+
+/-- Reads `thmType` as a characterization stated by one theorem, trying the relation's two sides as
+the candidate, and for an iff its two sides as the relation. Existence is proved from `lemmasFor`
+the definition found. `none` when no reading fits. -/
+private def readTheorem (thmType : Expr) (explicit? : Option Name)
+    (lemmasFor : Name → Array Name) : MetaM (Option TheoremShape) :=
+  forallTelescopeReducing thmType fun xs concl => do
+    let readings : Array (Expr × Option Expr) := match concl.iff? with
+      | some (a, b) => #[(a, some b), (b, some a)]
+      | none => #[(concl, none)]
+    for (rel, other?) in readings do
+      let args := rel.getAppArgs
+      if args.size < 2 then continue
+      let lhs := args[args.size - 2]!
+      let rhs := args[args.size - 1]!
+      for (cand, defn) in #[(lhs, rhs), (rhs, lhs)] do
+        unless cand.isFVar && xs.contains cand do continue
+        let c := cand.fvarId!
+        if defn.containsFVar c then continue
+        let some target ← definitionIn? defn explicit? | continue
+        -- the property: the hypotheses on the candidate, and for an iff the other side
+        let mut props : Array Expr := #[]
+        let mut context : Array String := #[]
+        for x in xs do
+          if x == cand then continue
+          let ty ← inferType x
+          unless ← Meta.isProp ty do continue
+          if ty.containsFVar c then props := props.push ty
+          else unless (← x.fvarId!.getBinderInfo).isInstImplicit do
+            context := context.push (← ppExpr ty).pretty
+        if let some o := other? then props := props.push o
+        if props.isEmpty then continue
+        let circular := props.any (·.getUsedConstants.contains target)
+        -- existence: the definition in the candidate's place satisfies each condition
+        let lemmas := lemmasFor target
+        let mut conditions := #[]
+        for pr in props do
+          -- the iff's other side follows from the theorem once `R (d …) (d …)` does
+          let goalType := if other?.isSome && pr == other?.get! then rel.replaceFVar cand defn
+            else pr.replaceFVar cand defn
+          let proof ← withoutModifyingState do
+            let g ← mkFreshExprMVar goalType
+            proveFrom lemmas 3 g.mvarId!
+          conditions := conditions.push
+            { text := (← ppExpr pr).pretty (width := 1000), proved := proof.isSome
+              provedBy := (proof.getD #[]).toList.eraseDups.toArray }
+        return some
+          { form := if other?.isSome then "iff" else "uniqueness", target
+            candidate := (← c.getUserName).toString
+            relation := (← ppExpr rel).pretty (width := 1000)
+            relationHead := rel.getAppFn.constName?.getD .anonymous
+            conditions, context, circular }
+    return none
+
+end TheoremForm
+
 /-! ### The attribute -/
 
 /--
@@ -665,7 +845,15 @@ theorem isEntropy_entropy (p : Distribution α) : IsEntropy p (entropy p) := …
 theorem IsEntropy.unique (h₁ : IsEntropy p x) (h₂ : IsEntropy p y) : x = y := …
 ```
 
-The role keyword is required. The predicate on the two theorems is optional — by default it is
+With no keyword, `@[characterization]` goes on a theorem that states a characterization by itself,
+with no predicate (see "A characterization stated by one theorem" above):
+
+```lean
+@[characterization "the defining equation"]
+theorem eq_double_iff (n m : Nat) : m = double n ↔ m = n + n := …
+```
+
+With a keyword, the predicate on the two theorems is optional — by default it is
 read off the statement — and can be given when the guess is wrong or ambiguous, as
 `@[characterization uniqueness IsEntropy]`. A comment may follow in either position; on the
 property it is the place to say what the characterization is *called*.
@@ -674,8 +862,14 @@ Unlike `@[specifies]`, the shapes are checked: a theorem whose statement is not 
 claims is a build error, not a wrong entry in a published specification.
 -/
 syntax (name := characterization) (priority := high) &"characterization"
-  ppSpace (&"property" <|> &"existence" <|> &"uniqueness")
+  (ppSpace (&"property" <|> &"existence" <|> &"uniqueness"))?
   (ppSpace ident)? (ppSpace str)? : attr
+
+register_option characterization.checkExistence : Bool := {
+  defValue := true
+  descr := "warn when a theorem carrying `@[characterization]` has conditions that the definition \
+    was not shown to satisfy from its `@[specifies]` theorems"
+}
 
 register_option characterization.checkNotCircular : Bool := {
   defValue := true
@@ -714,19 +908,67 @@ initialize registerBuiltinAttribute {
     -- `@[characterization existence]` is an identifier followed by one identifier, which is also
     -- exactly what `Attr.simple` accepts. `priority := high` should mean the parser above wins,
     -- but both shapes are handled so that a change in that resolution is not a silent failure.
-    let (roleStx, hubStx?, commentStx?) :=
+    -- `Attr.simple` delivers its one argument as an identifier: a role keyword, or the definition
+    -- of the keyword-less form.
+    let (role?, hubStx?, commentStx?) :=
       if stx.getKind == ``Lean.Parser.Attr.simple then
-        (stx[1][0], none, none)
+        match stx[1].getOptional? with
+        | some a => match roleOf? a with
+          | some r => (some r, none, none)
+          | none => (none, some a, none)
+        | none => (none, none, none)
       else
-        (stx[1], stx[2].getOptional?, stx[3].getOptional?)
-    let some role := roleOf? roleStx
-      | throwError "invalid `characterization` attribute, expected `@[characterization property \
-          myDefinition]`, `@[characterization existence]` or `@[characterization uniqueness]`"
+        (stx[1].getOptional?.bind roleOf?, stx[2].getOptional?, stx[3].getOptional?)
     let comment := (commentStx?.bind Syntax.isStrLit?).getD ""
 
     let env ← getEnv
     let some info := env.find? declName
       | throwError "unknown declaration `{declName}`"
+
+    let some role := role?
+      | -- The keyword-less form: one theorem, no predicate.
+        unless ← isProof info do
+          throwError "`@[characterization]` belongs on a theorem that states a characterization, \
+            but `{declName}` is not a proposition. On a predicate, write \
+            `@[characterization property myDefinition]`"
+        let explicit? ← hubStx?.mapM fun id => Elab.realizeGlobalConstNoOverloadWithInfo id
+        let lemmasFor (target : Name) : Array Name :=
+          (specTheoremsFor env target).filterMap fun e =>
+            if e.theoremName == declName then none else some e.theoremName
+        let some shape ← Meta.MetaM.run' (readTheorem info.type explicit? lemmasFor)
+          | throwError "`{declName}` does not state a characterization. That would be either an \
+              iff, `R x (definition …) ↔ property of x`, or a uniqueness theorem, \
+              `hypotheses on x → R x (definition …)`, where `x` is a variable of the theorem and \
+              `R` a relation applied to the two. Its statement is{indentExpr info.type}"
+        let target := shape.target
+        let some anchor := anchor? env declName target
+          | throwError "cannot record that `{declName}` characterizes `{target}`: both are declared \
+              in imported modules, so the entry would sit in a module neither of them points back \
+              to and a consumer reaching either through its own imports would not see it. Write \
+              the annotation in the module that declares one of them."
+        if (charEntries env).any fun e => e.role == .theorem && e.declName == declName then
+          throwError "`{declName}` is already registered as a characterization"
+        if shape.circular && characterization.checkNotCircular.get (← getOptions) then
+          logWarning m!"the property `{declName}` states about `{shape.candidate}` mentions \
+            `{target}`, the definition it characterizes: a property that refers to the definition \
+            pins nothing down. Set `characterization.checkNotCircular` to `false` to silence this."
+        let open_ := shape.conditions.filter (!·.proved)
+        if !open_.isEmpty && characterization.checkExistence.get (← getOptions) then
+          logWarning m!"`{declName}` characterizes `{target}` only once `{target}` is shown to \
+            satisfy its property, and these conditions were not shown from the `@[specifies \
+            {target}]` theorems declared so far:\
+            {MessageData.joinSep (open_.toList.map fun c => m!"\n  {c.text}") ""}\n\
+            State them as `@[specifies]` theorems before this one, or apply the attribute after \
+            them, as `attribute [characterization] {declName}`. Set \
+            `characterization.checkExistence` to `false` to silence this."
+        addEntry ({ declName, role := .theorem, property := declName, target
+                    relation := shape.relation, relationHead := shape.relationHead, comment
+                    form := shape.form, candidate := shape.candidate
+                    conditions := shape.conditions, context := shape.context } : CharEntry).toEntry
+          anchor
+        unless (specEntries env).any fun e => e.theoremName == declName && e.target == target do
+          addEntry ({ theoremName := declName, target, comment } : SpecEntry).toEntry anchor
+        return
 
     if role == .property then
       if ← isProof info then
