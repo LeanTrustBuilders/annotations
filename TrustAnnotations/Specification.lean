@@ -825,14 +825,22 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
         let some target ← definitionIn? defn explicit? | continue
         -- the property: the hypotheses on the candidate, and for an iff the other side
         let mut props : Array Expr := #[]
+        let pp (e : Expr) : MetaM String := return (← ppExpr e).pretty (width := 1000)
         let mut context : Array String := #[]
         for x in xs do
           if x == cand then continue
           let ty ← inferType x
           unless ← Meta.isProp ty do continue
           if ty.containsFVar c then props := props.push ty
-          else unless (← x.fvarId!.getBinderInfo).isInstImplicit do
-            context := context.push (← ppExpr ty).pretty
+          -- A proposition among the instance arguments is a hypothesis like any other when it is
+          -- about data (`[SigmaFinite (μ.trim hm)]`), and the setting when it is about types only
+          -- (`[CompleteSpace E]`), which is not where the characterization holds.
+          else if (← x.fvarId!.getBinderInfo).isInstImplicit &&
+              !(← (Lean.collectFVars {} ty).fvarIds.anyM fun f => do
+                -- data: neither a type nor an instance on one
+                return !(← f.getType).isSort && !(← f.getBinderInfo).isInstImplicit) then
+            continue
+          else context := context.push (← pp ty)
         if let some o := other? then props := props.push o
         if props.isEmpty then continue
         let circular := props.any (·.getUsedConstants.contains target)
@@ -857,15 +865,15 @@ private def readTheorem (thmType : Expr) (explicit? : Option Name)
           let (used, assumed) := proof.getD (#[], #[])
           let mut assuming := #[]
           for a in assumed do
-            let s := (← ppExpr a).pretty (width := 1000)
+            let s ← pp a
             unless assuming.contains s do assuming := assuming.push s
           conditions := conditions.push
-            { text := (← ppExpr pr).pretty (width := 1000), proved := proof.isSome
+            { text := ← pp pr, proved := proof.isSome
               provedBy := used.toList.eraseDups.toArray, assuming }
         return some
           { form := if other?.isSome then "iff" else "uniqueness", target
             candidate := (← c.getUserName).toString
-            relation := (← ppExpr rel).pretty (width := 1000)
+            relation := ← pp rel
             relationHead := rel.getAppFn.constName?.getD .anonymous
             conditions, context, circular }
     return none
