@@ -71,8 +71,16 @@ shows is recorded as open, with a warning, and the characterization as incomplet
 attribute later (`attribute [characterization] thm`) picks up specification theorems declared in
 between.
 
+Existence often needs more than uniqueness: a specification theorem may have a premise the
+characterization's context does not provide (`⟨M⟩` compensates `M²` only for a square-integrable
+adapted `M`, while any two compensators agree without that). Such a premise is assumed, and
+recorded with the condition (`assuming`) as where the definition has the property, so the
+uniqueness theorem needs no hypothesis its own proof does not use. Only premises of specification
+theorems can be assumed, never a condition itself, and only propositions about the theorem's own
+variables that do not mention the definition.
+
 The payload of such an entry has `role` `"theorem"`, the theorem as `property`, and also `form`
-(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by}`), `context` (the
+(`"iff"` or `"uniqueness"`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `context` (the
 hypotheses not about the candidate: where the characterization holds) and `complete`.
 
 ### Domains

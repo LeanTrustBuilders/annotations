@@ -92,6 +92,31 @@ theorem bump.one_lt (hf : ∀ k, 0 < f k) (n : Nat) : 1 < bump f n := by
 theorem eq_bump (f : Nat → Nat) (_hf : ∀ k, 0 < f k) (n m : Nat) (_h₁ : 1 < m) (h₂ : m = f n + 1) :
     m = bump f n := h₂
 
+/-- `f n`, meant for a positive `f`. -/
+def pick (f : Nat → Nat) (n : Nat) : Nat := f n
+
+@[specifies]
+theorem pick.pos (hf : ∀ k, 0 < f k) (n : Nat) : 0 < pick f n := hf n
+
+-- Uniqueness needs nothing about `f`, existence needs `hf`: the theorem does not carry it, and
+-- the premise of `pick.pos` is assumed and recorded instead.
+@[characterization]
+theorem eq_pick (f : Nat → Nat) (n m : Nat) (_h₁ : 0 < m) (h₂ : m = f n) : m = pick f n := h₂
+
+@[specifies]
+theorem pick.lt (h : pick f n < 5) : pick f n < 10 := by omega
+
+-- A premise about the definition's own value is not assumed: that would be assuming the
+-- property, not a condition on the arguments.
+/--
+warning: `TrustAnnotations.Test.CharacterizationTheorem.eq_pick'` characterizes `TrustAnnotations.Test.CharacterizationTheorem.pick` only once `TrustAnnotations.Test.CharacterizationTheorem.pick` is shown to satisfy its property, and these conditions were not shown from the `@[specifies TrustAnnotations.Test.CharacterizationTheorem.pick]` theorems declared so far:
+  m < 10
+State them as `@[specifies]` theorems before this one, or apply the attribute after them, as `attribute [characterization] TrustAnnotations.Test.CharacterizationTheorem.eq_pick'`. Set `characterization.checkExistence` to `false` to silence this.
+-/
+#guard_msgs in
+@[characterization]
+theorem eq_pick' (f : Nat → Nat) (n m : Nat) (_h₁ : m < 10) (h₂ : m = f n) : m = pick f n := h₂
+
 /-! ## Reading the annotations back -/
 
 private def dump (env : Environment) : String :=
@@ -104,7 +129,9 @@ private def dump (env : Environment) : String :=
       let how := if !k.proved then "open"
         else if k.provedBy.isEmpty then "shown"
         else s!"by {String.intercalate ", " (k.provedBy.toList.map toString)}"
-      s!"    {k.text}: {how}"
+      let assuming := if k.assuming.isEmpty then ""
+        else s!" (assuming {String.intercalate ", " k.assuming.toList})"
+      s!"    {k.text}: {how}{assuming}"
     String.intercalate "\n" <|
       [ s!"{c.target} by {c.property}{comment}",
         s!"  {e.form}, candidate {e.candidate}, up to: {e.relation} [{e.relationHead}]" ] ++
@@ -138,6 +165,16 @@ TrustAnnotations.Test.CharacterizationTheorem.bump by TrustAnnotations.Test.Char
     m = f n + 1: shown
   where: ∀ (k : Nat), 0 < f k
   complete: true
+TrustAnnotations.Test.CharacterizationTheorem.pick by TrustAnnotations.Test.CharacterizationTheorem.eq_pick
+  uniqueness, candidate m, up to: m = pick f n [Eq]
+    0 < m: by TrustAnnotations.Test.CharacterizationTheorem.pick.pos (assuming ∀ (k : Nat), 0 < f k)
+    m = f n: shown
+  complete: true
+TrustAnnotations.Test.CharacterizationTheorem.pick by TrustAnnotations.Test.CharacterizationTheorem.eq_pick'
+  uniqueness, candidate m, up to: m = pick f n [Eq]
+    m < 10: open
+    m = f n: shown
+  complete: false
 -/
 #guard_msgs in
 #eval show CoreM Unit from do IO.println (dump (← getEnv))
