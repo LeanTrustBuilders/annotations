@@ -166,6 +166,26 @@ initialize
 The attribute is then global, applied at most once per declaration, and its entries are exported
 by the extractor as the facet `annotation.my_attr` with no change to the extractor.
 
+## Payloads
+
+The payloads are the format: the extractor exports them as they are, in the `entries` of the facet
+`annotation.<attribute>` (S2), and tools read them there. The keys:
+
+| attribute | payload |
+|---|---|
+| `claim` | `{}`, or `{reference}` |
+| `example_of`, `nonexample_of` | `{target}`: the definition |
+| `specifies` | `{target, comment}` |
+| `characterization` | `role` (`property`, `existence`, `uniqueness` or `theorem`), `property` (the predicate, or for `theorem` the theorem itself), `target` (the definition), `relation` (the uniqueness theorem's conclusion as written), `relationHead` (its head constant), `comment`. For `theorem`, also `form` (`iff` or `uniqueness`), `candidate`, `conditions` (each `{text, proved, by, assuming}`), `context`, `variables`, `specialized` and `complete`, as described above |
+| `domain` | `{predicate, statement, note, source}`: the hidden predicate, the domain as written, the note, and `author` or `catalogue` |
+| `up_to` | `{relation, statement, relationHead, note, source}`: the hidden relation, the relation applied to two variables, its head constant, the note, and `author` or `catalogue` |
+
+**Versions of a payload.** A payload may carry `version`, the version of that attribute's payload;
+without it, it is version 1. Within a version a payload only gains keys; a key whose meaning changes,
+or goes, makes a new version, recorded in `version` and in this table. A reader ignores the keys it
+does not know, and checks `version` before relying on one whose meaning has changed. Every payload
+above is version 1.
+
 ## Reading annotations
 
 `TrustAnnotations.entries env` returns every entry visible in `env`. A tool reading a compiled
