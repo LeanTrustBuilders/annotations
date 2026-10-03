@@ -135,8 +135,11 @@ package. Anything an attribute needs to evolve goes in its payload.
 
 ## Versions
 
-`main` follows the newest Lean toolchain; a branch `lean-v<toolchain>` carries the same code on an
-older one (`lean-v4.34.0`, `lean-v4.34.0-rc2`). The tags are older snapshots.
+`main` is on the Lean toolchain of Mathlib's master. Every hour, the workflow Follow Mathlib's
+toolchain checks: when Mathlib has moved, it keeps the old toolchain on a branch
+`lean-v<toolchain>`, moves `main` to the new one once it builds with its tests, and tags it
+`v<toolchain>`. A build that fails opens an issue labelled `toolchain` instead. The branches of older
+toolchains get no further changes.
 
 ## Tests
 
